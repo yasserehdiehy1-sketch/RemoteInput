@@ -33,6 +33,7 @@ import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import kotlinx.coroutines.launch
+import androidx.compose.foundation.clickable
 
 // ═════════════════════════════════════════════════════════════
 //  Design Tokens
@@ -538,15 +539,48 @@ private val ROW_4 = listOf(
     KeySpec("◀", 0x25), KeySpec("▲", 0x26), KeySpec("▼", 0x28), KeySpec("▶", 0x27),
     KeySpec("⏎", 0x0D, weight = 1.2f)
 )
+// ═════════════════════════════════════════════════════════════
+//  Arabic Keyboard Data
+// ═════════════════════════════════════════════════════════════
+private val AR_ROW_0 = listOf("ض", "ص", "ث", "ق", "ف", "غ", "ع", "ه", "خ", "ح")
+private val AR_ROW_1 = listOf("ش", "س", "ي", "ب", "ل", "ا", "ت", "ن", "م", "ك")
+private val AR_ROW_2 = listOf("⇧", "ط", "ج", "د", "ذ", "ر", "ز", "و", "ظ", "⌫")
+private val AR_ROW_3 = listOf("Esc", "Tab", "ة", "ى", "ء", "ؤ", "ئ", "لا", "؟", "⏎")
+private val AR_ROW_4 = listOf("Ctrl", "Alt", "Win", "Space", "◀", "▲", "▼", "▶", "،", "؛")
 
+// خريطة الحروف العربية → VK (عشان Ctrl+C وغيرها تشتغل)
+private val AR_TO_VK = mapOf(
+    "ض" to 0x51, "ص" to 0x57, "ث" to 0x45, "ق" to 0x52, "ف" to 0x54,
+    "غ" to 0x59, "ع" to 0x55, "ه" to 0x49, "خ" to 0x4F, "ح" to 0x50,
+    "ش" to 0x41, "س" to 0x53, "ي" to 0x44, "ب" to 0x46, "ل" to 0x47,
+    "ا" to 0x48, "ت" to 0x4A, "ن" to 0x4B, "م" to 0x4C, "ك" to 0x3B,
+    "ط" to 0x5A, "ج" to 0x58, "د" to 0x43, "ذ" to 0x56, "ر" to 0x42,
+    "ز" to 0x4E, "و" to 0x4D, "ظ" to 0x2F
+)
+
+// VK للأزرار الخاصة (Esc, Tab, arrows...)
+private fun vkFor(label: String): Int? = when (label) {
+    "Esc"   -> 0x1B
+    "Tab"   -> 0x09
+    "⌫"     -> 0x08
+    "⏎"     -> 0x0D
+    "Space" -> 0x20
+    "◀"     -> 0x25
+    "▲"     -> 0x26
+    "▼"     -> 0x28
+    "▶"     -> 0x27
+    else    -> null
+}
 @Composable
 fun KeyboardView(net: NetClient, onEmoji: () -> Unit) {
+    var isArabic by remember { mutableStateOf(false) }
     var shift by remember { mutableStateOf(false) }
     var ctrl by remember { mutableStateOf(false) }
     var alt by remember { mutableStateOf(false) }
     var win by remember { mutableStateOf(false) }
 
-    fun sendWithMods(vk: Int) {
+    // إرسال VK + modifiers (للإنجليزي وللاختصارات)
+    fun sendVkWithMods(vk: Int) {
         if (shift) net.key(0x10, true)
         if (ctrl)  net.key(0x11, true)
         if (alt)   net.key(0x12, true)
@@ -560,49 +594,158 @@ fun KeyboardView(net: NetClient, onEmoji: () -> Unit) {
         if (shift) shift = false
     }
 
+    // معالجة مفتاح عربي أو زر
+    fun handleArKey(label: String) {
+        when (label) {
+            "⇧"   -> shift = !shift
+            "Ctrl" -> ctrl = !ctrl
+            "Alt"  -> alt = !alt
+            "Win"  -> win = !win
+            else -> {
+                val vk = vkFor(label)
+                when {
+                    vk != null -> sendVkWithMods(vk) // أزرار خاصة
+                    ctrl || alt || win -> {
+                        // اختصار — استخدم الحرف اللاتيني المقابل
+                        val shortcutVk = AR_TO_VK[label]
+                        if (shortcutVk != null) sendVkWithMods(shortcutVk)
+                        else net.sendText(label)
+                    }
+                    else -> net.sendText(label) // حرف عربي Unicode
+                }
+                if (shift) shift = false
+            }
+        }
+    }
+
     Column(
-        Modifier.fillMaxSize().background(AppColors.Bg).padding(6.dp),
+        Modifier
+            .fillMaxSize()
+            .background(AppColors.Bg)
+            .padding(6.dp),
         verticalArrangement = Arrangement.spacedBy(6.dp)
     ) {
-        listOf(ROW_0, ROW_1, ROW_2, ROW_3).forEach { row ->
-            KeyRow(row, Modifier.weight(1f), shift, ctrl, alt, win,
-                onSend = { sendWithMods(it) },
-                onModifier = { name ->
-                    when (name) {
-                        "⇧" -> shift = !shift
-                        "Ctrl" -> ctrl = !ctrl
-                        "Alt"  -> alt  = !alt
-                        "Win"  -> win  = !win
-                    }
-                })
+        // ─────────── الشريط العلوي ───────────
+        Row(
+            Modifier.fillMaxWidth().padding(vertical = 2.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.SpaceBetween
+        ) {
+            // زر تبديل اللغة
+            Box(
+                Modifier
+                    .height(32.dp)
+                    .clip(RoundedCornerShape(8.dp))
+                    .background(AppColors.Accent.copy(alpha = 0.2f))
+                    .clickable { isArabic = !isArabic }
+                    .padding(horizontal = 14.dp),
+                contentAlignment = Alignment.Center
+            ) {
+                Text(
+                    if (isArabic) "ع | EN" else "EN | ع",
+                    color = AppColors.Accent,
+                    fontSize = 13.sp,
+                    fontWeight = FontWeight.SemiBold
+                )
+            }
+
+            Text(
+                if (isArabic) "كيبورد عربي" else "English Keyboard",
+                color = AppColors.TextDim,
+                fontSize = 11.sp
+            )
+
+            // زر الإيموجي
+            Box(
+                Modifier
+                    .size(32.dp)
+                    .clip(RoundedCornerShape(8.dp))
+                    .background(AppColors.KeySpecial)
+                    .clickable { onEmoji() },
+                contentAlignment = Alignment.Center
+            ) {
+                Text("😊", fontSize = 16.sp)
+            }
         }
-        // صف أخير + زر الإيموجي
-        Row(Modifier.weight(1f).fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(5.dp)) {
-            ROW_4.forEach { k ->
-                if (k.isModifier) {
-                    val active = when (k.label) {
-                        "Ctrl" -> ctrl
-                        "Alt"  -> alt
-                        "Win"  -> win
-                        else   -> false
-                    }
-                    KeyCap(k.label, Modifier.weight(k.weight), active, true) {
-                        when (k.label) {
+
+        // ─────────── الصفوف ───────────
+        if (isArabic) {
+            listOf(AR_ROW_0, AR_ROW_1, AR_ROW_2, AR_ROW_3, AR_ROW_4).forEach { row ->
+                ArKeyRow(row, Modifier.weight(1f), shift, ctrl, alt, win, ::handleArKey)
+            }
+        } else {
+            listOf(ROW_0, ROW_1, ROW_2, ROW_3).forEach { row ->
+                KeyRow(row, Modifier.weight(1f), shift, ctrl, alt, win,
+                    onSend = { sendVkWithMods(it) },
+                    onModifier = { name ->
+                        when (name) {
+                            "⇧" -> shift = !shift
                             "Ctrl" -> ctrl = !ctrl
-                            "Alt"  -> alt  = !alt
-                            "Win"  -> win  = !win
+                            "Alt"  -> alt = !alt
+                            "Win"  -> win = !win
+                        }
+                    })
+            }
+            // صف 4 بدون زر إيموجي (انتقل للشريط العلوي)
+            Row(
+                Modifier.weight(1f).fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(5.dp)
+            ) {
+                ROW_4.forEach { k ->
+                    if (k.isModifier) {
+                        val active = when (k.label) {
+                            "Ctrl" -> ctrl; "Alt" -> alt; "Win" -> win; else -> false
+                        }
+                        KeyCap(k.label, Modifier.weight(k.weight), active, true) {
+                            when (k.label) {
+                                "Ctrl" -> ctrl = !ctrl
+                                "Alt"  -> alt = !alt
+                                "Win"  -> win = !win
+                            }
+                        }
+                    } else {
+                        KeyCap(k.label, Modifier.weight(k.weight), false, false) {
+                            sendVkWithMods(k.vk)
                         }
                     }
-                } else {
-                    KeyCap(k.label, Modifier.weight(k.weight), false, false) { sendWithMods(k.vk) }
                 }
             }
-            // ⚡ زر الإيموجي
-            KeyCap("😊", Modifier.weight(1.1f), false, true, onEmoji)
         }
     }
 }
-
+@Composable
+fun ArKeyRow(
+    keys: List<String>,
+    modifier: Modifier,
+    shift: Boolean, ctrl: Boolean, alt: Boolean, win: Boolean,
+    onKey: (String) -> Unit
+) {
+    Row(modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(5.dp)) {
+        keys.forEach { key ->
+            val weight = when (key) {
+                "Space" -> 3.2f
+                "⇧", "⌫" -> 1.3f
+                "لا" -> 1.3f
+                "⏎" -> 1.2f
+                "Ctrl", "Alt", "Win" -> 1.1f
+                "Esc", "Tab" -> 1.1f
+                else -> 1f
+            }
+            val isMod = key in setOf("⇧", "Ctrl", "Alt", "Win")
+            val isSpecial = isMod || key in setOf(
+                "Esc", "Tab", "⌫", "⏎", "◀", "▲", "▼", "▶", "Space"
+            )
+            val active = when (key) {
+                "⇧"   -> shift
+                "Ctrl" -> ctrl
+                "Alt"  -> alt
+                "Win"  -> win
+                else   -> false
+            }
+            KeyCap(key, Modifier.weight(weight), active, isSpecial) { onKey(key) }
+        }
+    }
+}
 @Composable
 fun KeyRow(keys: List<KeySpec>, modifier: Modifier = Modifier,
            shift: Boolean, ctrl: Boolean, alt: Boolean, win: Boolean,
